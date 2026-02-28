@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CyberDust - Advanced Air Quality HUD</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;600&display=swap"
+        rel="stylesheet">
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #030305;
+            color: #d1d5db;
+            font-family: 'Rajdhani', sans-serif;
+        }
+
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+
+        #hud {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            background: radial-gradient(circle at center, transparent 0%, rgba(0, 0, 5, 0.8) 100%);
+        }
+
+        header {
+            padding: 30px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid rgba(0, 255, 255, 0.2);
+            background: linear-gradient(90deg, rgba(0, 20, 40, 0.8) 0%, transparent 100%);
+            pointer-events: auto;
+        }
+
+        h1 {
+            margin: 0;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 2.5rem;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            color: #fff;
+            text-shadow: 0 0 10px #0ff, 0 0 20px #0ff;
+        }
+
+        h1 span {
+            color: #f0f;
+            text-shadow: 0 0 10px #f0f, 0 0 20px #f0f;
+        }
+
+        .system-status {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.9rem;
+            color: #0ff;
+            text-transform: uppercase;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #f0f;
+            box-shadow: 0 0 15px #f0f;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(0.8);
+                opacity: 0.8;
+            }
+
+            50% {
+                transform: scale(1.2);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(0.8);
+                opacity: 0.8;
+            }
+        }
+
+        #data-container {
+            flex: 1;
+            padding: 40px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 25px;
+            overflow-y: auto;
+            pointer-events: auto;
+            padding-bottom: 100px;
+        }
+
+        /* Custom Scrollbar */
+        #data-container::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #data-container::-webkit-scrollbar-track {
+            background: rgba(0, 20, 40, 0.5);
+        }
+
+        #data-container::-webkit-scrollbar-thumb {
+            background: #0ff;
+            border-radius: 4px;
+        }
+
+        .sensor-node {
+            background: rgba(10, 15, 30, 0.6);
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            border-left: 4px solid #0ff;
+            border-radius: 8px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            transition: all 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .sensor-node::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 50%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(0, 255, 255, 0.2), transparent);
+            transition: left 0.7s ease;
+        }
+
+        .sensor-node:hover {
+            transform: translateY(-5px) scale(1.02);
+            box-shadow: 0 10px 30px rgba(0, 255, 255, 0.2);
+            border-color: #0ff;
+        }
+
+        .sensor-node:hover::before {
+            left: 200%;
+        }
+
+        .sensor-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 15px;
+        }
+
+        .sensor-name {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.1rem;
+            color: #fff;
+            font-weight: 700;
+            width: 70%;
+            word-wrap: break-word;
+        }
+
+        .sensor-model {
+            font-size: 0.7rem;
+            background: rgba(0, 255, 255, 0.1);
+            color: #0ff;
+            padding: 3px 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(0, 255, 255, 0.4);
+        }
+
+        .pm-display {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .pm-value {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 3rem;
+            font-weight: 900;
+            line-height: 1;
+            text-shadow: 0 0 15px currentColor;
+        }
+
+        .pm-unit {
+            font-size: 0.9rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding-top: 15px;
+        }
+
+        .metric {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .metric-label {
+            font-size: 0.7rem;
+            color: #6b7280;
+            text-transform: uppercase;
+        }
+
+        .metric-value {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.1rem;
+            color: #e5e7eb;
+        }
+
+        /* Color Coding based on AQI */
+        .aqi-good {
+            color: #0f0;
+            border-left-color: #0f0;
+        }
+
+        .aqi-moderate {
+            color: #ff0;
+            border-left-color: #ff0;
+        }
+
+        .aqi-unhealthy {
+            color: #f90;
+            border-left-color: #f90;
+        }
+
+        .aqi-hazardous {
+            color: #f00;
+            border-left-color: #f00;
+        }
+
+        .aqi-extreme {
+            color: #f0f;
+            border-left-color: #f0f;
+        }
+
+        /* HUD Footer */
+        footer {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            padding: 15px 40px;
+            background: linear-gradient(0deg, rgba(0, 10, 20, 0.9) 0%, transparent 100%);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid rgba(0, 255, 255, 0.1);
+            pointer-events: auto;
+            box-sizing: border-box;
+        }
+
+        .log-console {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(0, 255, 255, 0.2);
+            border-radius: 4px;
+            padding: 8px 15px;
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: #0ff;
+            width: 50%;
+            height: 40px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            line-height: 24px;
+        }
+
+        .branding {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.7rem;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .branding a {
+            color: #0ff;
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        .branding a:hover {
+            color: #f0f;
+            text-shadow: 0 0 5px #f0f;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- 3D Background -->
+    <div id="canvas-container"></div>
+
+    <!-- Interface -->
+    <div id="hud">
+        <header>
+            <h1>Cyber<span>Dust</span></h1>
+            <div class="system-status">
+                <div class="status-indicator" id="conn-dot"></div>
+                <span id="conn-text">INITIALIZING UPLINK...</span>
+                <span style="color: #666; margin-left: 20px;" id="msg-rate">0 PKT/S</span>
+            </div>
+        </header>
+
+        <div id="data-container">
+            <!-- Sensor nodes will be injected here -->
+        </div>
+
+        <footer>
+            <div class="log-console" id="log-console">
+                Awaiting telemetry...
+            </div>
+            <div class="branding">
+                LINK: <span style="color: #f0f;">ACTIVE</span> | <a href="index.html">PSRU WORKSHOP</a> | BY SOUL BREWS
+                STUDIO
+            </div>
+        </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script>
+        // --- 1. THREE.JS CYBERPUNK BACKGROUND ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x030305, 0.002);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 50;
+        camera.position.y = 10;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        // Cyber Grid
+        const gridHelper = new THREE.GridHelper(200, 50, 0x00ffff, 0x003344);
+        gridHelper.position.y = -15;
+        scene.add(gridHelper);
+
+        // Particles for "Dust"
+        const particleCount = 3000;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+
+        const colorPalette = [
+            new THREE.Color(0x00ffff), // Cyan
+            new THREE.Color(0xff00ff), // Magenta
+            new THREE.Color(0x0000ff), // Blue
+            new THREE.Color(0xffffff)  // White
+        ];
+
+        for (let i = 0; i < particleCount; i++) {
+            positions[i * 3] = (Math.random() - 0.5) * 200;
+            positions[i * 3 + 1] = (Math.random() - 0.5) * 100 + 30;
+            positions[i * 3 + 2] = (Math.random() - 0.5) * 200;
+
+            const color = colorPalette[Math.floor(Math.random() * colorPalette.length)];
+            colors[i * 3] = color.r;
+            colors[i * 3 + 1] = color.g;
+            colors[i * 3 + 2] = color.b;
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        const material = new THREE.PointsMaterial({
+            size: 0.5,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.8,
+            map: createCircleTexture(),
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+
+        const particles = new THREE.Points(geometry, material);
+        scene.add(particles);
+
+        function createCircleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 16;
+            canvas.height = 16;
+            const context = canvas.getContext('2d');
+            const gradient = context.createRadialGradient(8, 8, 0, 8, 8, 8);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+            gradient.addColorStop(1, 'rgba(255,255,255,0)');
+            context.fillStyle = gradient;
+            context.fillRect(0, 0, 16, 16);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // Animation Loop
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            const elapsedTime = clock.getElapsedTime();
+
+            // Rotate grid slowly
+            camera.position.x = Math.sin(elapsedTime * 0.1) * 20;
+            camera.lookAt(0, 0, 0);
+
+            // Move particles (simulating dust flowing)
+            const positions = particles.geometry.attributes.position.array;
+            for (let i = 0; i < particleCount; i++) {
+                positions[i * 3] += Math.sin(elapsedTime * 0.5 + i) * 0.05; // x drift
+                positions[i * 3 + 1] += Math.cos(elapsedTime * + i) * 0.02 - 0.05; // y falling slowly
+
+                // Reset if they fall too low
+                if (positions[i * 3 + 1] < -15) {
+                    positions[i * 3 + 1] = 80;
+                }
+            }
+            particles.geometry.attributes.position.needsUpdate = true;
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // Handle Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- 2. MQTT DATA HANDLING ---
+        const sensors = new Map();
+        const dataContainer = document.getElementById('data-container');
+        const logConsole = document.getElementById('log-console');
+        const connDot = document.getElementById('conn-dot');
+        const connText = document.getElementById('conn-text');
+
+        let framesCount = 0;
+        setInterval(() => {
+            document.getElementById('msg-rate').innerText = framesCount + " PKT/S";
+            framesCount = 0;
+        }, 1000);
+
+        function getAQIClass(pm25) {
+            if (pm25 <= 25) return 'aqi-good';
+            if (pm25 <= 50) return 'aqi-moderate';
+            if (pm25 <= 100) return 'aqi-unhealthy';
+            if (pm25 <= 200) return 'aqi-hazardous';
+            return 'aqi-extreme';
+        }
+
+        function parseMsg(topic, raw) {
+            const msg = raw.toString();
+            if (msg === 'offline' || msg === 'online') return null;
+            try {
+                const obj = JSON.parse(msg);
+                const parts = topic.split('/');
+                const isModelT = parts[1] === 'Model-T';
+                const id = isModelT ? (obj.nickname || parts[2]) : (parts[3] || parts[2] || 'unknown');
+                const model = isModelT ? 'Model-T' : 'Model-N';
+
+                let pm25, pm10, temp, humid, name;
+                if (isModelT) {
+                    pm25 = obj.pm2_5; pm10 = obj.pm10;
+                    temp = obj.temp; humid = obj.humid;
+                    name = obj.nickname || id;
+                } else if (obj.d) {
+                    const d = obj.d;
+                    pm25 = d.pm2_5; pm10 = d.pm10;
+                    temp = d.temperature_c || d.temp_c;
+                    humid = d.humidity_rh || d.humid_rh;
+                    name = d.myName || id;
+                } else {
+                    pm25 = obj.pm2_5; pm10 = obj.pm10;
+                    temp = obj.temp_c; humid = obj.humid_rh;
+                    name = id;
+                }
+                return { id, name, model, pm25, pm10, temp, humid, ts: Date.now() };
+            } catch { return null; }
+        }
+
+        function updateDOM() {
+            // Sort by PM2.5 descending to show worst air quality first
+            const sorted = [...sensors.values()].sort((a, b) => (b.pm25 || 0) - (a.pm25 || 0));
+
+            dataContainer.innerHTML = sorted.map(s => {
+                const aqiClass = getAQIClass(s.pm25);
+                const pm25Str = s.pm25 != null ? Math.round(s.pm25) : 'ERR';
+                const tempStr = s.temp != null ? s.temp.toFixed(1) + '°C' : '--';
+                const humStr = s.humid != null ? s.humid.toFixed(0) + '%' : '--';
+                const pm10Str = s.pm10 != null ? Math.round(s.pm10) : '--';
+
+                return `
+                <div class="sensor-node ${aqiClass}">
+                    <div class="sensor-header">
+                        <div class="sensor-name">${s.name}</div>
+                        <div class="sensor-model">${s.model}</div>
+                    </div>
+                    <div class="pm-display ${aqiClass}">
+                        <div class="pm-value">${pm25Str}</div>
+                        <div class="pm-unit">PM2.5</div>
+                    </div>
+                    <div class="metrics-grid">
+                        <div class="metric">
+                            <span class="metric-label">PM10</span>
+                            <span class="metric-value">${pm10Str}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">TEMP</span>
+                            <span class="metric-value">${tempStr}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">HUMIDITY</span>
+                            <span class="metric-value">${humStr}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">STATUS</span>
+                            <span class="metric-value" style="color:#0f0;">ONLINE</span>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        // Connect to MQTT
+        const client = mqtt.connect('wss://dustboy-wss-bridge.laris.workers.dev/mqtt');
+
+        client.on('connect', () => {
+            connDot.style.backgroundColor = '#0f0';
+            connDot.style.boxShadow = '0 0 15px #0f0';
+            connText.innerText = 'UPLINK ESTABLISHED';
+            connText.style.color = '#0f0';
+            client.subscribe('DUSTBOY/+/+/+/status');
+            logConsole.innerText = "> SUBSCRIPTION SET: DUSTBOY/+/+/+/status";
+        });
+
+        client.on('message', (topic, message) => {
+            framesCount++;
+            const s = parseMsg(topic, message);
+            if (!s) return;
+
+            sensors.set(s.id, s);
+
+            // Log latest
+            logConsole.innerText = `[${new Date().toLocaleTimeString()}] INCOMING: ${s.name} | PM2.5: ${Math.round(s.pm25)}`;
+
+            // Throttled DOM update (every 1s max)
+            if (!window.updateQueued) {
+                window.updateQueued = true;
+                requestAnimationFrame(() => {
+                    updateDOM();
+                    window.updateQueued = false;
+                });
+            }
+        });
+
+        client.on('offline', () => {
+            connDot.style.backgroundColor = '#f00';
+            connDot.style.boxShadow = '0 0 15px #f00';
+            connText.innerText = 'UPLINK SEVERED';
+            connText.style.color = '#f00';
+            logConsole.innerText = "> CRITICAL: CONNECTION LOST";
+        });
+
+        client.on('error', (e) => {
+            connDot.style.backgroundColor = '#ff0';
+            connDot.style.boxShadow = '0 0 15px #ff0';
+            connText.innerText = 'UPLINK ERROR';
+            connText.style.color = '#ff0';
+            logConsole.innerText = "> ERROR: " + e.message;
+        });
+
+        // Clean up old sensors (optional interval)
+        setInterval(updateDOM, 5000);
+
+    </script>
+</body>
+
+</html>
